@@ -9,10 +9,7 @@ import (
 
 type Script struct {
 	gorm.Model
-<<<<<<< HEAD
-=======
 	Type     string `json:"type"`
->>>>>>> 6b0e71f528020ab713dddc43245a699c9818759d
 	Name     string `json:"name"`
 	Protocol int    `json:"protocol"`
 	Data     string `json:"data" gorm:"type:'longtext'"`
