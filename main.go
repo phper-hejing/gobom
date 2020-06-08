@@ -1,5 +1,0 @@
-package gobom
-
-func main() {
-
-}

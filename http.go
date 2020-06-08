@@ -1,55 +1,116 @@
 package gobom
 
 import (
-	"github.com/valyala/fasthttp"
-	"gobom/utils"
+	"fmt"
 	"time"
+
+	"github.com/valyala/fasthttp"
+
+	"gobom/utils"
 )
 
 type Http struct {
-	startTime  time.Duration
-	endTime    time.Duration
-	err        error
-	request    *fasthttp.Request
-	response   *fasthttp.Response
-	resultResp chan<- *Response
+	startTime          time.Duration
+	endTime            time.Duration
+	err                error
+	errRetries         uint8
+	resultResp         chan<- *Response
+	opt                *Options
+	response           *fasthttp.Response
+	TransactionOptions *TransactionOptions
 }
 
-func NewHttpRequest(respCh chan<- *Response) *Http {
+func NewHttpRequest(opt *Options) (*Http, error) {
 	return &Http{
-		request:    fasthttp.AcquireRequest(),
-		response:   fasthttp.AcquireResponse(),
-		resultResp: respCh,
-	}
+		errRetries: ERR_RETRIES,
+		opt:        opt,
+		TransactionOptions: &TransactionOptions{
+			TransactionOptionsData: opt.TransactionOptions.TransactionOptionsData,
+			TransactionResponse:    make(map[string][]byte),
+			TransactionIndex:       opt.TransactionOptions.TransactionIndex,
+		},
+	}, nil
 }
 
-func (http *Http) send() {
+func (http *Http) dispose() (response *Response, err error) {
+	if http.TransactionOptions != nil && http.TransactionOptions.TransactionOptionsData != nil {
+		response := &Response{
+			TransactionWasteTime: make(map[string]uint64),
+		}
+		respTemp := &Response{}
+		isSuccess := true
+		for _, data := range http.TransactionOptions.TransactionOptionsData {
+			http.send()
+			respTemp, err = http.recv()
+			if err != nil {
+				err = fmt.Errorf(fmt.Sprint(data.Name, "失败，错误原因：", err.Error()))
+				isSuccess = false
+				break
+			}
+			if respTemp.Data != nil {
+				http.TransactionOptions.SetTransactionResponse(data.Name, respTemp.Data)
+			}
+			if data.Interval != 0 {
+				time.Sleep(time.Duration(data.Interval) * time.Millisecond)
+			}
+			response.TransactionWasteTime[data.Name] = respTemp.WasteTime
+			response.WasteTime += respTemp.WasteTime
+		}
+		response.IsSuccess = isSuccess
+		if err != nil {
+			response.ErrMsg = err.Error()
+		}
+
+		return response, err
+	}
+	http.send()
+	return http.recv()
+}
+
+func (http *Http) send() (err error) {
+
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+
+	http.opt.fillHttp(req, http.TransactionOptions)
+
 	defer func() {
-		fasthttp.ReleaseRequest(http.request)
-		fasthttp.ReleaseResponse(http.response)
-		http.recv()
+		fasthttp.ReleaseRequest(req)
 	}()
+
 	http.startTime = utils.Now()
+	http.err = fasthttp.DoTimeout(req, resp, time.Duration(DEFAULT_REQUEST_TIMEOUT)*time.Second)
+	http.response = resp
 
-	http.err = fasthttp.DoTimeout(http.request, http.response, time.Duration(5))
+	return nil
 }
 
-func (http *Http) recv() {
-	IsSuccess := false
+func (http *Http) recv() (response *Response, err error) {
+
+	defer func() {
+		fasthttp.ReleaseResponse(http.response)
+	}()
+
+	isSuccess := false
+	errMsg := ""
 	if http.response.StatusCode() == fasthttp.StatusOK {
-		IsSuccess = true
+		isSuccess = true
 	}
-
+	if http.err != nil {
+		errMsg = http.err.Error()
+	}
 	http.endTime = utils.Now()
-	resp := &Response{
+
+	return &Response{
 		WasteTime: uint64(http.getRequestTime()),
-		IsSuccess: IsSuccess,
+		IsSuccess: isSuccess,
 		ErrCode:   http.response.StatusCode(),
-		ErrMsg:    http.err.Error(),
-		Data:      nil,
-	}
-	http.resultResp <- resp
+		ErrMsg:    errMsg,
+		Data:      http.response.Body(),
+	}, http.err
 }
+
+func (http *Http) close() {}
 
 func (http *Http) getRequestTime() time.Duration {
 	if http.startTime == 0 || http.endTime == 0 || http.endTime < http.startTime {
