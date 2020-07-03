@@ -1,6 +1,7 @@
 package gobom
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -33,17 +34,21 @@ func NewHttpRequest(opt *Options) (*Http, error) {
 }
 
 func (http *Http) dispose() (response *Response, err error) {
-	if http.TransactionOptions != nil && http.TransactionOptions.TransactionOptionsData != nil {
+	if !http.TransactionOptions.Empty() {
 		response := &Response{
 			TransactionWasteTime: make(map[string]uint64),
 		}
 		respTemp := &Response{}
 		isSuccess := true
 		for _, data := range http.TransactionOptions.TransactionOptionsData {
-			http.send()
+			if err = http.send(); err != nil {
+				err = fmt.Errorf(fmt.Sprint(data.Name, "，错误原因：", err.Error()))
+				isSuccess = false
+				break
+			}
 			respTemp, err = http.recv()
 			if err != nil {
-				err = fmt.Errorf(fmt.Sprint(data.Name, "失败，错误原因：", err.Error()))
+				err = fmt.Errorf(fmt.Sprint(data.Name, "，错误原因：", err.Error()))
 				isSuccess = false
 				break
 			}
@@ -63,7 +68,9 @@ func (http *Http) dispose() (response *Response, err error) {
 
 		return response, err
 	}
-	http.send()
+	if err := http.send(); err != nil {
+		return nil, err
+	}
 	return http.recv()
 }
 
@@ -91,10 +98,11 @@ func (http *Http) recv() (response *Response, err error) {
 		fasthttp.ReleaseResponse(http.response)
 	}()
 
-	isSuccess := false
+	isSuccess := true
 	errMsg := ""
-	if http.response.StatusCode() == fasthttp.StatusOK {
-		isSuccess = true
+	if http.response.StatusCode() != fasthttp.StatusOK {
+		isSuccess = false
+		http.err = errors.New(fmt.Sprintf("错误码:%d", http.response.StatusCode()))
 	}
 	if http.err != nil {
 		errMsg = http.err.Error()

@@ -111,13 +111,18 @@ func (opt *Options) Init() {
 }
 
 func (opt *Options) Check() error {
-	if opt.Url == "" {
-		return ERR_URL
-	}
-	if opt.ConCurrent == 0 {
-		return ERR_CONCURRENCY
-	}
 	return nil
+}
+
+func (opt *Options) ToByte() []byte {
+	if opt == nil {
+		return nil
+	}
+	b, err := json.Marshal(opt)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (opt *Options) fillHttp(req *fasthttp.Request, transactionOptions *TransactionOptions) {
@@ -246,6 +251,13 @@ func (sendData *SendData) GetSendDataToMap(transactionOptions *TransactionOption
 		}
 	}
 	return bm
+}
+
+func (transactionOptions *TransactionOptions) Empty() bool {
+	if transactionOptions == nil || transactionOptions.TransactionOptionsData == nil || len(transactionOptions.TransactionOptionsData) == 0 {
+		return true
+	}
+	return false
 }
 
 func (transactionOptions *TransactionOptions) Get() TransactionOptionsData {

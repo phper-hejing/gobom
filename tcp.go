@@ -105,7 +105,7 @@ func NewTcpRequest(opt *Options) (*Tcp, error) {
 
 func (tcp *Tcp) dispose() (response *Response, err error) {
 
-	if tcp.TransactionOptions != nil && tcp.TransactionOptions.TransactionOptionsData != nil {
+	if !tcp.TransactionOptions.Empty() {
 		response := &Response{
 			TransactionWasteTime: make(map[string]uint64),
 		}
@@ -113,12 +113,13 @@ func (tcp *Tcp) dispose() (response *Response, err error) {
 		isSuccess := true
 		for _, data := range tcp.TransactionOptions.TransactionOptionsData {
 			if err = tcp.send(); err != nil {
+				err = fmt.Errorf(fmt.Sprint(data.Name, "，错误原因：", err.Error()))
 				isSuccess = false
 				break
 			}
 			respTemp, err = tcp.recv()
 			if err != nil {
-				err = fmt.Errorf(fmt.Sprint(data.Name, "失败，错误原因：", err.Error()))
+				err = fmt.Errorf(fmt.Sprint(data.Name, "，错误原因：", err.Error()))
 				isSuccess = false
 				break
 			} else {

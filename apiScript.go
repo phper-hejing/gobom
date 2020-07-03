@@ -1,13 +1,15 @@
 package gobom
 
 import (
+	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/gorm"
 	"io"
 	"net/http"
 )
 
-type Script struct {
+type ScriptData struct {
 	gorm.Model
 	Type     string `json:"type"`
 	Name     string `json:"name"`
@@ -15,10 +17,10 @@ type Script struct {
 	Data     string `json:"data" gorm:"type:'longtext'"`
 }
 
-var scriptTable = &Script{}
+var scriptTable = &ScriptData{}
 
-func ScriptApi(ctx *gin.Context) {
-	script := Script{}
+func ScriptDataHandel(ctx *gin.Context) {
+	scriptData := ScriptData{}
 	var msg string
 	var err error
 	var data interface{}
@@ -31,58 +33,76 @@ func ScriptApi(ctx *gin.Context) {
 			Data: data,
 		})
 	}()
-	if err = ctx.ShouldBind(&script); err != nil {
+	if err = ctx.ShouldBind(&scriptData); err != nil {
 		if err != io.EOF {
 			return
 		}
 	}
 	switch ctx.FullPath() {
-	case "/script":
-		if script.ID != 0 {
-			data, err = script.ScriptFind()
+	case "/scriptData":
+		if scriptData.ID != 0 {
+			data, err = scriptData.Get()
 		} else {
-			data, err = script.ScriptFindAll()
+			data, err = scriptData.First()
 		}
-	case "/script/add":
-		err = script.ScriptAdd()
-	case "/script/delete":
-		err = script.ScriptDel()
-	case "/script/edit":
-		err = script.ScriptEdit()
+	case "/scriptData/add":
+		err = scriptData.Add()
+	case "/scriptData/delete":
+		err = scriptData.Del()
+	case "/scriptData/edit":
+		err = scriptData.Update()
+	case "/scriptData/test":
+		err = scriptData.Run()
 	}
 
 }
 
-func (script *Script) ScriptAdd() error {
-	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Create(script).Error; err != nil {
+func (scriptData *ScriptData) Run() error {
+	var opt Options
+	if scriptData.Data == "" {
+		return errors.New("参数错误")
+	}
+	if err := json.Unmarshal([]byte(scriptData.Data), &opt); err != nil {
+		return errors.New("参数解析错误")
+	}
+	opt.Form = scriptData.Protocol
+	gobomReq, err := NewGomBomRequest(&opt)
+	if err != nil {
+		return err
+	}
+	return gobomReq.boardTest()
+}
+
+func (scriptData *ScriptData) Add() error {
+	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Create(scriptData).Error; err != nil {
 		return err
 	}
 	return nil
 }
 
-func (script *Script) ScriptDel() error {
-	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Delete(&script).Error; err != nil {
+func (scriptData *ScriptData) Del() error {
+	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Delete(&scriptData).Error; err != nil {
 		return err
 	}
 	return nil
 }
 
-func (script *Script) ScriptEdit() error {
-	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Save(script).Error; err != nil {
+func (scriptData *ScriptData) Update() error {
+	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Save(scriptData).Error; err != nil {
 		return err
 	}
 	return nil
 }
 
-func (script *Script) ScriptFind() (*Script, error) {
-	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).First(script).Error; err != nil {
+func (scriptData *ScriptData) First() (*ScriptData, error) {
+	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).First(scriptData).Error; err != nil {
 		return nil, err
 	}
-	return script, nil
+	return scriptData, nil
 }
 
-func (script *Script) ScriptFindAll() ([]Script, error) {
-	var scripts []Script
+func (scriptData *ScriptData) Get() ([]ScriptData, error) {
+	var scripts []ScriptData
 	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(scriptTable)).Find(&scripts).Error; err != nil {
 		return nil, err
 	}

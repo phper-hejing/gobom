@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/donnie4w/go-logger/logger"
@@ -19,11 +20,9 @@ type Requester interface {
 type GobomRequest struct {
 	Options    *Options
 	Report     *Report
-	Duration   uint64
-	ConCurrent uint64
+	Duration   *uint64
+	ConCurrent *uint64
 
-	err        error
-	mu         sync.RWMutex
 	wg         sync.WaitGroup
 	stop       chan bool
 	stopStatus bool // 标识stop chan是否关闭
@@ -48,9 +47,11 @@ const (
 )
 
 var (
-	ERR_FORM         = errors.New("无法识别的请求类型")
-	ERR_REQUEST_CONN = errors.New("建立连接失败")
+	ERR_FORM       = errors.New("无法识别的请求类型")
+	ERR_CONCURRENT = errors.New("并发数不能为0")
 )
+
+type DisposeCallFunc func(err error)
 
 func NewGomBomRequest(options *Options) (*GobomRequest, error) {
 	if err := options.Check(); err != nil {
@@ -60,14 +61,14 @@ func NewGomBomRequest(options *Options) (*GobomRequest, error) {
 		Report: &Report{
 			ConCurrency: options.ConCurrent,
 		},
-		Options:    options,
-		ConCurrent: options.ConCurrent,
-		Duration:   options.Duration,
+		Options: options,
 	}
+	atomic.StoreUint64(gobom.ConCurrent, options.ConCurrent)
+	atomic.StoreUint64(gobom.Duration, options.Duration)
 	return &gobom, nil
 }
 
-func (gobom *GobomRequest) Dispose() (err error) {
+func (gobom *GobomRequest) Dispose(callback DisposeCallFunc) error {
 
 	// 预请求
 	//if err := gobom.boardTest(); err != nil {
@@ -80,17 +81,22 @@ func (gobom *GobomRequest) Dispose() (err error) {
 		ReportWg   sync.WaitGroup // 统计数据wg
 		conCurrent = gobom.getConCurrent()
 		duration   = gobom.getDuration()
+		err        error
+		errNum     uint64
 	)
 
 	gobom.wg = sync.WaitGroup{}
-	gobom.mu = sync.RWMutex{}
 	gobom.resultResp = make(chan *Response, DEFAULT_RESPONSE_COUNT)
 	gobom.stop = make(chan bool, DEFAULT_STOP_CAP)
 
 	go gobom.Timer() // 定时器关闭请求
 	ReportWg.Add(1)
 	go gobom.Report.ReceivingResults(gobom.resultResp, &ReportWg) // 统计请求数据
-	gobom.Start(gobom.getConCurrent())
+
+	err, errNum = gobom.Start(gobom.getConCurrent())
+	if errNum != gobom.getConCurrent() { // TODO 错误数如果不和并发数相等，应该是部分协程请求失败，不应该直接返回失败
+		err = nil
+	}
 
 	gobom.wg.Wait()
 	close(gobom.stop)
@@ -99,10 +105,12 @@ func (gobom *GobomRequest) Dispose() (err error) {
 	gobom.stopStatus = true
 	logger.Debug("dispose out...")
 
-	gobom.ConCurrent = conCurrent
-	gobom.Duration = duration
+	atomic.StoreUint64(gobom.ConCurrent, conCurrent)
+	atomic.StoreUint64(gobom.Duration, duration)
 
-	return gobom.err
+	callback(err)
+
+	return err
 }
 
 func (gobom *GobomRequest) AddConcurrentAndStart(count uint64) {
@@ -110,9 +118,12 @@ func (gobom *GobomRequest) AddConcurrentAndStart(count uint64) {
 	gobom.Start(count)
 }
 
-func (gobom *GobomRequest) Start(count uint64) {
+func (gobom *GobomRequest) Start(count uint64) (err error, errNum uint64) {
+	var (
+		errCount = new(uint64)
+	)
 	if count == 0 {
-		return
+		return ERR_CONCURRENT, count
 	}
 	logger.Debug("signal count：", gobom.getConCurrent())
 	for i := uint64(0); i < count; i++ {
@@ -122,16 +133,17 @@ func (gobom *GobomRequest) Start(count uint64) {
 				gobom.wg.Done()
 				gobom.minusConCurrent(1)
 			}()
-			if err := gobom.board(); err != nil {
+			if err = gobom.board(); err != nil {
 				logger.Debug(err)
-				gobom.err = err // TODO 这里只想要协程退出的错误,不考虑并发写err问题
+				atomic.AddUint64(errCount, 1)
 			}
 		}()
 	}
+	return err, atomic.LoadUint64(errCount)
 }
 
 func (gobom *GobomRequest) boardTest() (err error) {
-	requester, err := GetRequester(gobom.Options)
+	requester, err := gobom.GetRequester()
 	if err != nil {
 		return err
 	}
@@ -145,7 +157,7 @@ func (gobom *GobomRequest) boardTest() (err error) {
 
 func (gobom *GobomRequest) board() (err error) {
 
-	requester, err := GetRequester(gobom.Options)
+	requester, err := gobom.GetRequester()
 	if err != nil {
 		return err
 	}
@@ -158,17 +170,17 @@ func (gobom *GobomRequest) board() (err error) {
 			return nil
 		default:
 			resp, err := requester.dispose()
-			// 如果是错误重试请求的时候，不统计错误
-			if resp != nil && err_retries == 1 {
-				gobom.resultResp <- resp
-			}
 			if err != nil {
 				if err_retries > ERR_RETRIES {
 					return err
 				}
 				err_retries++
+				continue
 			} else {
 				err_retries = 1
+			}
+			if resp != nil {
+				gobom.resultResp <- resp
 			}
 			if gobom.Options.Interval != 0 {
 				time.Sleep(time.Duration(gobom.Options.Interval) * time.Millisecond)
@@ -217,47 +229,41 @@ func (gobom *GobomRequest) Timer() {
 func (gobom *GobomRequest) Info() string {
 	b, err := json.Marshal(gobom.Report)
 	if err != nil {
-		return "{}"
+		return ""
 	}
 	return string(b)
 }
 
 func (gobom *GobomRequest) getConCurrent() uint64 {
-	gobom.mu.RLock()
-	defer gobom.mu.RUnlock()
-	return gobom.ConCurrent
-}
-
-func (gobom *GobomRequest) addConCurrent(count uint64) {
-	gobom.mu.Lock()
-	defer gobom.mu.Unlock()
-	gobom.ConCurrent += count
-}
-
-func (gobom *GobomRequest) minusConCurrent(count uint64) {
-	gobom.mu.Lock()
-	defer gobom.mu.Unlock()
-	gobom.ConCurrent -= count
+	return atomic.LoadUint64(gobom.ConCurrent)
 }
 
 func (gobom *GobomRequest) getDuration() uint64 {
-	return gobom.Duration
+	return atomic.LoadUint64(gobom.Duration)
+}
+
+func (gobom *GobomRequest) addConCurrent(count uint64) {
+	atomic.AddUint64(gobom.ConCurrent, count)
+}
+
+func (gobom *GobomRequest) minusConCurrent(count uint64) {
+	atomic.AddUint64(gobom.ConCurrent, ^uint64(count-1))
 }
 
 func (gobom *GobomRequest) addDuration(count uint64) {
-	gobom.Duration += count
+	atomic.AddUint64(gobom.Duration, count)
 }
 
 func (gobom *GobomRequest) minusDuration(count uint64) {
-	gobom.Duration -= count
+	atomic.AddUint64(gobom.Duration, ^uint64(count-1))
 }
 
-func GetRequester(opt *Options) (requester Requester, err error) {
-	switch opt.Form {
+func (gobom *GobomRequest) GetRequester() (requester Requester, err error) {
+	switch gobom.Options.Form {
 	case FORM_HTTP:
-		requester, err = NewHttpRequest(opt)
+		requester, err = NewHttpRequest(gobom.Options)
 	case FORM_TCP:
-		requester, err = NewTcpRequest(opt)
+		requester, err = NewTcpRequest(gobom.Options)
 	case FORM_WEBSOCKET:
 		// TODO
 	default:
