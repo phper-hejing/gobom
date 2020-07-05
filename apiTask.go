@@ -18,8 +18,10 @@ type TaskData struct {
 var taskTable = &TaskData{}
 
 func TaskDataHandel(ctx *gin.Context) {
-	taskData := TaskData{}
-	opt := Options{}
+	opt := &Options{}
+	taskData := TaskData{
+		Task: &Task{},
+	}
 	var msg string
 	var err error
 	var data interface{}
@@ -32,15 +34,17 @@ func TaskDataHandel(ctx *gin.Context) {
 			Data: data,
 		})
 	}()
-	if err = ctx.ShouldBind(&opt); err != nil {
+	if err = ctx.ShouldBind(opt); err != nil {
 		if err != io.EOF {
 			return
 		}
 	}
 
-	task := &Task{}
-	task.TaskId = opt.TaskId
-	taskData.Task = task
+	if opt.TaskId == "" {
+		taskData.Task, err = NewTask(opt)
+	} else {
+		taskData.Task.TaskId = opt.TaskId
+	}
 	taskData.Options = opt.ToByte()
 
 	switch ctx.FullPath() {
@@ -67,19 +71,19 @@ func TaskDataHandel(ctx *gin.Context) {
 }
 
 func (taskData *TaskData) Add() (err error) {
-	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Create(taskData.Task).Error
+	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Create(taskData).Error
 }
 
 func (taskData *TaskData) Del() (err error) {
-	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Delete(taskData.Task).Error
+	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("task_id = ?", taskData.Task.TaskId).Delete(taskData).Error
 }
 
 func (taskData *TaskData) Update() (err error) {
-	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Save(taskData.Task).Error
+	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("task_id = ?", taskData.Task.TaskId).Save(taskData).Error
 }
 
 func (taskData *TaskData) First() (taskDataList *TaskData, err error) {
-	return taskData, GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).First(taskData.Task).Error
+	return taskData, GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("task_id = ?", taskData.Task.TaskId).First(taskData).Error
 }
 
 func (taskData *TaskData) Get() (taskDataList []TaskData, err error) {
@@ -89,13 +93,14 @@ func (taskData *TaskData) Get() (taskDataList []TaskData, err error) {
 }
 
 func (taskData *TaskData) Run() (err error) {
-	task, err := GetTask(taskData.Options)
+	taskData.First()
 	if err != nil {
 		return errors.New("创建任务实例失败")
 	}
-	taskData.Task = task
-	taskData.Update()
-	go taskData.Task.Run()
+	go func() {
+		taskData.Task.Run()
+		taskData.Update()
+	}()
 	return
 }
 

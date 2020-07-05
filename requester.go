@@ -61,7 +61,9 @@ func NewGomBomRequest(options *Options) (*GobomRequest, error) {
 		Report: &Report{
 			ConCurrency: options.ConCurrent,
 		},
-		Options: options,
+		Options:    options,
+		ConCurrent: new(uint64),
+		Duration:   new(uint64),
 	}
 	atomic.StoreUint64(gobom.ConCurrent, options.ConCurrent)
 	atomic.StoreUint64(gobom.Duration, options.Duration)
