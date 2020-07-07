@@ -91,14 +91,13 @@ func newFrameConn(url string) (frameConn goframe.FrameConn, err error) {
 }
 
 func NewTcpRequest(opt *Options) (*Tcp, error) {
-
-	tcp := &Tcp{}
-	tcp.opt = opt
-	tcp.errRetries = ERR_RETRIES
-	tcp.TransactionOptions = &TransactionOptions{
-		TransactionOptionsData: opt.TransactionOptions.TransactionOptionsData,
-		TransactionResponse:    make(map[string][]byte),
-		TransactionIndex:       opt.TransactionOptions.TransactionIndex,
+	if opt == nil {
+		return nil, ERR_OPTIONS_NIL
+	}
+	tcp := &Tcp{
+		errRetries:         ERR_RETRIES,
+		opt:                opt,
+		TransactionOptions: opt.TransactionOptions.Copy(),
 	}
 	return tcp, nil
 }
@@ -111,7 +110,7 @@ func (tcp *Tcp) dispose() (response *Response, err error) {
 		}
 		respTemp := &Response{}
 		isSuccess := true
-		for _, data := range tcp.TransactionOptions.TransactionOptionsData {
+		for _, data := range tcp.TransactionOptions.TransactionOptionsDataList {
 			if err = tcp.send(); err != nil {
 				err = fmt.Errorf(fmt.Sprint(data.Name, "，错误原因：", err.Error()))
 				isSuccess = false
@@ -155,7 +154,7 @@ func (tcp *Tcp) dispose() (response *Response, err error) {
 func (tcp *Tcp) send() (err error) {
 	var frameConn goframe.FrameConn
 	var transactionData TransactionOptionsData
-	if tcp.TransactionOptions != nil && tcp.TransactionOptions.TransactionOptionsData != nil {
+	if !tcp.TransactionOptions.Empty() {
 		transactionData = tcp.TransactionOptions.Get()
 		transactionData.SendData.init()
 		frameConn, err = tcoPools.get(transactionData.Name, transactionData.Url)
@@ -215,6 +214,7 @@ func (tcp *Tcp) getSendData(transactionData TransactionOptionsData) []byte {
 	//	Sex:  1,
 	//})
 	dataByte, _ := json.Marshal(transactionData.SendData.GetSendDataToMap(tcp.TransactionOptions))
+	tcp.TransactionOptions.SetTransactionSendData(transactionData.Name, dataByte)
 	dataByte = []byte("aaa")
 	return dataByte
 }

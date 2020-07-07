@@ -2,7 +2,7 @@ package gobom
 
 import (
 	"encoding/json"
-	"errors"
+	"github.com/donnie4w/go-logger/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/gorm"
 	"io"
@@ -11,8 +11,8 @@ import (
 
 type TaskData struct {
 	gorm.Model
-	Task    *Task  `json:"task" gorm:"EMBEDDED"`
-	Options []byte `json:"options"`
+	Task     *Task  `json:"task" gorm:"EMBEDDED"`
+	TaskByte []byte `json:"taskByte"`
 }
 
 var taskTable = &TaskData{}
@@ -41,11 +41,12 @@ func TaskDataHandel(ctx *gin.Context) {
 	}
 
 	if opt.TaskId == "" {
-		taskData.Task, err = NewTask(opt)
+		if taskData.Task, err = NewTask(opt); err != nil {
+			return
+		}
 	} else {
 		taskData.Task.TaskId = opt.TaskId
 	}
-	taskData.Options = opt.ToByte()
 
 	switch ctx.FullPath() {
 	case "/task":
@@ -68,6 +69,20 @@ func TaskDataHandel(ctx *gin.Context) {
 	case "/task/stop":
 		err = taskData.Stop()
 	}
+}
+
+func (taskData *TaskData) BeforeCreate() (err error) {
+	taskData.TaskByte, err = json.Marshal(taskData.Task)
+	return err
+}
+
+func (taskData *TaskData) BeforeSave() (err error) {
+	taskData.TaskByte, err = json.Marshal(taskData.Task)
+	return err
+}
+
+func (taskData *TaskData) AfterFind() (err error) {
+	return json.Unmarshal(taskData.TaskByte, taskData.Task)
 }
 
 func (taskData *TaskData) Add() (err error) {
@@ -94,11 +109,10 @@ func (taskData *TaskData) Get() (taskDataList []TaskData, err error) {
 
 func (taskData *TaskData) Run() (err error) {
 	taskData.First()
-	if err != nil {
-		return errors.New("创建任务实例失败")
-	}
 	go func() {
-		taskData.Task.Run()
+		if err := taskData.Task.Run(); err != nil {
+			logger.Debug(err)
+		}
 		taskData.Update()
 	}()
 	return
@@ -107,7 +121,7 @@ func (taskData *TaskData) Run() (err error) {
 func (taskData *TaskData) Stop() (err error) {
 	taskTemp, ok := runTasks.Load(taskData.Task.TaskId)
 	if !ok {
-		return errors.New("停止失败，任务没有运行")
+		return ERR_TASK_STOP_NONE
 	}
 	task := taskTemp.(*Task)
 	task.Stop(CLOSE_ALL)
@@ -125,19 +139,4 @@ func (taskData *TaskData) Info() (data string, err error) {
 		return "", err
 	}
 	return taskData.Task.Info(), nil
-}
-
-func GetTask(data []byte) (task *Task, err error) {
-	if data == nil {
-		return nil, errors.New("opt is nil")
-	}
-	var opt Options
-	if err := json.Unmarshal(data, &opt); err != nil {
-		return nil, err
-	}
-	task, err = NewTask(&opt)
-	if err != nil {
-		return nil, err
-	}
-	return task, err
 }

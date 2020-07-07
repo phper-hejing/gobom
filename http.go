@@ -1,6 +1,7 @@
 package gobom
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -23,13 +24,9 @@ type Http struct {
 
 func NewHttpRequest(opt *Options) (*Http, error) {
 	return &Http{
-		errRetries: ERR_RETRIES,
-		opt:        opt,
-		TransactionOptions: &TransactionOptions{
-			TransactionOptionsData: opt.TransactionOptions.TransactionOptionsData,
-			TransactionResponse:    make(map[string][]byte),
-			TransactionIndex:       opt.TransactionOptions.TransactionIndex,
-		},
+		errRetries:         ERR_RETRIES,
+		opt:                opt,
+		TransactionOptions: opt.TransactionOptions.Copy(),
 	}, nil
 }
 
@@ -40,7 +37,7 @@ func (http *Http) dispose() (response *Response, err error) {
 		}
 		respTemp := &Response{}
 		isSuccess := true
-		for _, data := range http.TransactionOptions.TransactionOptionsData {
+		for _, data := range http.TransactionOptions.TransactionOptionsDataList {
 			if err = http.send(); err != nil {
 				err = fmt.Errorf(fmt.Sprint(data.Name, "，错误原因：", err.Error()))
 				isSuccess = false
@@ -79,7 +76,7 @@ func (http *Http) send() (err error) {
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
 
-	http.opt.fillHttp(req, http.TransactionOptions)
+	http.fillHttp(req, http.TransactionOptions)
 
 	defer func() {
 		fasthttp.ReleaseRequest(req)
@@ -125,4 +122,48 @@ func (http *Http) getRequestTime() time.Duration {
 		return time.Duration(0)
 	}
 	return http.endTime - http.startTime
+}
+
+func (http *Http) fillHttp(req *fasthttp.Request, transactionOptions *TransactionOptions) {
+	var (
+		url      = http.opt.Url
+		method   = http.opt.HttpOptions.Method
+		cookie   = http.opt.HttpOptions.Cookie
+		header   = http.opt.HttpOptions.Header
+		sendData = http.opt.SendData
+	)
+
+	transactionOptionsData := transactionOptions.Get()
+	if !transactionOptionsData.Empty() {
+		sendData = transactionOptionsData.SendData
+		url = transactionOptionsData.Url
+		method = transactionOptionsData.HttpOptions.Method
+		cookie = transactionOptionsData.HttpOptions.Cookie
+		header = transactionOptionsData.HttpOptions.Header
+	}
+
+	if method == "" {
+		method = "GET"
+	}
+
+	sendData.init()
+
+	req.SetRequestURI(url)
+	req.Header.SetMethod(method)
+	req.Header.Set("user-agent", "gobom")
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range cookie {
+		req.Header.SetCookie(k, v)
+	}
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+	if sendData != nil {
+		if bm, err := json.Marshal(sendData.GetSendDataToMap(transactionOptions)); err == nil {
+			req.SetBody(bm)
+			if !transactionOptionsData.Empty() {
+				transactionOptions.SetTransactionSendData(transactionOptionsData.Name, bm)
+			}
+		}
+	}
 }

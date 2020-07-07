@@ -3,25 +3,15 @@ package gobom
 import (
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/tidwall/gjson"
 	"strings"
 	"sync"
 
 	"github.com/360EntSecGroup-Skylar/excelize"
 	"github.com/donnie4w/go-logger/logger"
 	"github.com/smallnest/goframe"
-	"github.com/valyala/fasthttp"
-
+	"github.com/tidwall/gjson"
 	"gobom/utils"
-)
-
-var (
-	ERR_FILE_INIT  = errors.New("初始化失败")
-	ERR_FILE_PARSE = errors.New("解析文件数据失败")
-	ERR_FILE_OPEN  = errors.New("打开文件数据失败")
-	ERR_FILE_READ  = errors.New("读取文件数据失败")
 )
 
 const (
@@ -29,10 +19,11 @@ const (
 	FORM_TCP
 	FORM_WEBSOCKET
 
-	TYPE_INT    = "int"
-	TYPE_STRING = "string"
-	TYPE_FILE   = "file"
-	TYPE_RESP   = "response"
+	TYPE_INT       = "int"
+	TYPE_STRING    = "string"
+	TYPE_FILE      = "file"
+	TYPE_SEND_DATA = "sendData"
+	TYPE_RESP      = "response"
 
 	FILE_DATA_PATH = "../store/data"
 	FILE_PARSE_SEP = "---"
@@ -66,9 +57,10 @@ type HttpOptions struct {
 }
 
 type TransactionOptions struct {
-	TransactionOptionsData []TransactionOptionsData `json:"transactionOptionsData"`
-	TransactionResponse    map[string][]byte        `json:"-"`
-	TransactionIndex       uint64                   `json:"-"`
+	TransactionOptionsDataList []TransactionOptionsData `json:"transactionOptionsData"`
+	TransactionSendData        map[string][]byte        `json:"-"` // 事务发送的数据
+	TransactionResponse        map[string][]byte        `json:"-"` // 事务响应的数据
+	TransactionIndex           uint64                   `json:"-"`
 }
 
 type TransactionOptionsData struct {
@@ -99,12 +91,6 @@ type SourceFile struct {
 	m      sync.Mutex
 }
 
-var (
-	ERR_URL         = errors.New("URL不能为空")
-	ERR_CONCURRENCY = errors.New("并发数数值过小")
-	ERR_DURATION    = errors.New("持续时间数值过小")
-)
-
 // 初始化数据
 func (opt *Options) Init() {
 
@@ -123,52 +109,6 @@ func (opt *Options) ToByte() []byte {
 		return nil
 	}
 	return b
-}
-
-func (opt *Options) fillHttp(req *fasthttp.Request, transactionOptions *TransactionOptions) {
-	var (
-		url      = opt.Url
-		method   = opt.HttpOptions.Method
-		cookie   = opt.HttpOptions.Cookie
-		header   = opt.HttpOptions.Header
-		sendData = opt.SendData
-	)
-
-	if transactionOptions != nil {
-		if transactionOptions.TransactionOptionsData != nil && len(transactionOptions.TransactionOptionsData) != 0 {
-			sendData = transactionOptions.TransactionOptionsData[transactionOptions.TransactionIndex].SendData
-			url = transactionOptions.TransactionOptionsData[transactionOptions.TransactionIndex].Url
-			method = transactionOptions.TransactionOptionsData[transactionOptions.TransactionIndex].HttpOptions.Method
-			cookie = transactionOptions.TransactionOptionsData[transactionOptions.TransactionIndex].HttpOptions.Cookie
-			header = transactionOptions.TransactionOptionsData[transactionOptions.TransactionIndex].HttpOptions.Header
-		}
-		defer func() {
-			if transactionOptions.TransactionIndex++; transactionOptions.TransactionIndex >= uint64(len(transactionOptions.TransactionOptionsData)) {
-				transactionOptions.TransactionIndex = 0
-			}
-		}()
-	}
-
-	if method == "" {
-		method = "GET"
-	}
-
-	sendData.init()
-
-	req.SetRequestURI(url)
-	req.Header.SetMethod(method)
-	req.Header.Set("user-agent", "gobom")
-	for k, v := range cookie {
-		req.Header.SetCookie(k, v)
-	}
-	for k, v := range header {
-		req.Header.Set(k, v)
-	}
-	if sendData != nil {
-		if bm, err := json.Marshal(sendData.GetSendDataToMap(transactionOptions)); err == nil {
-			req.SetBody(bm)
-		}
-	}
 }
 
 func (sendData *SendData) init() error {
@@ -237,9 +177,20 @@ func (sendData *SendData) GetSendDataToMap(transactionOptions *TransactionOption
 			bm[v.Name] = utils.GetRandomStrings(uint64(v.Len))
 		case TYPE_FILE:
 			bm[v.Name] = sendData.getFileValue(v.Dynamic)
+		case TYPE_SEND_DATA:
+			bm[v.Name] = ""
+			if !transactionOptions.Empty() {
+				name, fields := sendData.parseField(v.Dynamic)
+				sendByte := transactionOptions.GetTransactionSendData(name)
+				if sendByte == nil {
+					continue
+				}
+				result := gjson.Get(string(sendByte), fields)
+				bm[v.Name] = result.Value()
+			}
 		case TYPE_RESP:
 			bm[v.Name] = ""
-			if transactionOptions != nil {
+			if !transactionOptions.Empty() {
 				name, fields := sendData.parseField(v.Dynamic)
 				respByte := transactionOptions.GetTransactionResponse(name)
 				if respByte == nil {
@@ -254,19 +205,38 @@ func (sendData *SendData) GetSendDataToMap(transactionOptions *TransactionOption
 }
 
 func (transactionOptions *TransactionOptions) Empty() bool {
-	if transactionOptions == nil || transactionOptions.TransactionOptionsData == nil || len(transactionOptions.TransactionOptionsData) == 0 {
+	if transactionOptions == nil || transactionOptions.TransactionOptionsDataList == nil || len(transactionOptions.TransactionOptionsDataList) == 0 {
+		return true
+	}
+	return false
+}
+
+func (transactionOptions *TransactionOptions) Copy() *TransactionOptions {
+	return &TransactionOptions{
+		TransactionOptionsDataList: transactionOptions.TransactionOptionsDataList,
+		TransactionSendData:        transactionOptions.TransactionSendData,
+		TransactionResponse:        transactionOptions.TransactionResponse,
+		TransactionIndex:           0,
+	}
+}
+
+func (transactionOptionsData *TransactionOptionsData) Empty() bool {
+	if transactionOptionsData == nil || transactionOptionsData.Name == "" {
 		return true
 	}
 	return false
 }
 
 func (transactionOptions *TransactionOptions) Get() TransactionOptionsData {
+	if transactionOptions == nil || transactionOptions.TransactionOptionsDataList == nil {
+		return TransactionOptionsData{}
+	}
 	defer func() {
-		if transactionOptions.TransactionIndex++; transactionOptions.TransactionIndex >= uint64(len(transactionOptions.TransactionOptionsData)) {
+		if transactionOptions.TransactionIndex++; transactionOptions.TransactionIndex >= uint64(len(transactionOptions.TransactionOptionsDataList)) {
 			transactionOptions.TransactionIndex = 0
 		}
 	}()
-	return transactionOptions.TransactionOptionsData[transactionOptions.TransactionIndex]
+	return transactionOptions.TransactionOptionsDataList[transactionOptions.TransactionIndex]
 }
 
 func (transactionOptions *TransactionOptions) GetTransactionResponse(name string) []byte {
@@ -280,10 +250,33 @@ func (transactionOptions *TransactionOptions) GetTransactionResponse(name string
 }
 
 func (transactionOptions *TransactionOptions) SetTransactionResponse(key string, val []byte) {
-	if transactionOptions == nil || transactionOptions.TransactionResponse == nil {
+	if transactionOptions == nil {
 		return
 	}
+	if transactionOptions.TransactionResponse == nil {
+		transactionOptions.TransactionResponse = make(map[string][]byte)
+	}
 	transactionOptions.TransactionResponse[key] = val
+}
+
+func (transactionOptions *TransactionOptions) GetTransactionSendData(name string) []byte {
+	if transactionOptions == nil || transactionOptions.TransactionSendData == nil {
+		return nil
+	}
+	if val, ok := transactionOptions.TransactionSendData[name]; ok {
+		return val
+	}
+	return nil
+}
+
+func (transactionOptions *TransactionOptions) SetTransactionSendData(key string, val []byte) {
+	if transactionOptions == nil {
+		return
+	}
+	if transactionOptions.TransactionSendData == nil {
+		transactionOptions.TransactionSendData = make(map[string][]byte)
+	}
+	transactionOptions.TransactionSendData[key] = val
 }
 
 func (sendData *SendData) getFileValue(key string) interface{} {

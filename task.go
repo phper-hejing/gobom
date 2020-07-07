@@ -1,7 +1,6 @@
 package gobom
 
 import (
-	"errors"
 	"gobom/utils"
 	"strconv"
 	"sync"
@@ -16,16 +15,11 @@ const (
 	STATUS_ERROR
 )
 
-var (
-	ERR_TASK_WORKER = errors.New("task worker is nil")
-	ERR_TASK_RUN    = errors.New("任务正在运行中")
-)
-
 var runTasks sync.Map
 
 type Task struct {
-	TaskId string        `json:"taskId"`
-	Worker *GobomRequest `json:"-"`
+	TaskId string        `json:"taskId" gorm:"unique_index"`
+	Worker *GobomRequest `json:"worker" gorm:"-"`
 	Status int           `json:"status" gorm:"DEFAULT:0;"`
 }
 
@@ -46,21 +40,21 @@ func (task *Task) Run() error {
 	if task == nil || task.Worker == nil {
 		return ERR_TASK_WORKER
 	}
-	if task.GetStatus() == STATUS_RUN {
+	if _, ok := runTasks.Load(task.TaskId); ok {
 		return ERR_TASK_RUN
+
 	}
 	task.SetStatus(STATUS_RUN)
 	runTasks.Store(task.TaskId, task)
 	task.Worker.Options.Init()
-	return task.Worker.Dispose(func(err error) {
+	return task.Worker.Dispose(func(err error) error {
 		if err != nil {
 			task.SetStatus(STATUS_ERROR)
-			return
 		}
-		if task.GetStatus() == STATUS_STOP {
-			return
+		if task.GetStatus() != STATUS_STOP {
+			task.SetStatus(STATUS_OVER)
 		}
-		task.SetStatus(STATUS_OVER)
+		return err
 	})
 }
 

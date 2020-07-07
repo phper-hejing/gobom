@@ -23,50 +23,44 @@ const FILE_STORE_PATH = "./store/report"
 func (report *Report) ReceivingResults(resultResp <-chan *Response, ReportWg *sync.WaitGroup) {
 	defer ReportWg.Done()
 
-	var (
-		totalTime                 uint64                 // 总时间
-		maxTime                   uint64                 // 最大时长
-		minTime                   uint64                 // 最小时长
-		successNum                uint64                 // 成功请求数
-		failureNum                uint64                 // 失败请求数
-		errCode                   = make(map[int]int)    // [错误码]错误个数
-		errCodeMsg                = make(map[int]string) // [错误码]错误码描述
-		everyReqWasteTime         = make([]uint64, 0)
-		everyTransactionWasteTime = make([]map[string]uint64, 0)
-	)
+	if report.ErrCode == nil {
+		report.ErrCode = make(map[int]int)
+	}
+
+	if report.ErrCodeMsg == nil {
+		report.ErrCodeMsg = make(map[int]string)
+	}
+
+	if report.EveryReqWasteTime == nil {
+		report.EveryReqWasteTime = make([]uint64, 0)
+	}
+
+	if report.EveryTransactionWasteTime == nil {
+		report.EveryTransactionWasteTime = make([]map[string]uint64, 0)
+	}
 
 	for data := range resultResp {
 		if data.IsSuccess {
-			totalTime += data.WasteTime
-			successNum++
-			if data.WasteTime > maxTime {
-				maxTime = data.WasteTime
+			report.TotalTime += data.WasteTime
+			report.SuccessNum++
+			if data.WasteTime > report.MaxTime {
+				report.MaxTime = data.WasteTime
 			}
-			if minTime == 0 || (data.WasteTime != 0 && data.WasteTime < minTime) {
-				minTime = data.WasteTime
+			if report.MinTime == 0 || (data.WasteTime != 0 && data.WasteTime < report.MinTime) {
+				report.MinTime = data.WasteTime
 			}
-			everyReqWasteTime = append(everyReqWasteTime, data.WasteTime)
+			report.EveryReqWasteTime = append(report.EveryReqWasteTime, data.WasteTime)
 			if data.TransactionWasteTime != nil {
-				everyTransactionWasteTime = append(everyTransactionWasteTime, data.TransactionWasteTime)
+				report.EveryTransactionWasteTime = append(report.EveryTransactionWasteTime, data.TransactionWasteTime)
 			}
 		} else {
-			failureNum++
-			errCode[data.ErrCode]++
-			if _, ok := errCodeMsg[data.ErrCode]; !ok {
-				errCodeMsg[data.ErrCode] = data.ErrMsg
+			report.FailureNum++
+			report.ErrCode[data.ErrCode]++
+			if _, ok := report.ErrCodeMsg[data.ErrCode]; !ok {
+				report.ErrCodeMsg[data.ErrCode] = data.ErrMsg
 			}
 		}
-
-		report.MaxTime = maxTime
-		report.MinTime = minTime
-		report.SuccessNum = successNum
-		report.FailureNum = failureNum
-		report.ErrCode = errCode
-		report.ErrCodeMsg = errCodeMsg
-		report.TotalTime = totalTime
 		report.AverageTime = report.getAvgTime()
-		report.EveryReqWasteTime = everyReqWasteTime
-		report.EveryTransactionWasteTime = everyTransactionWasteTime
 	}
 
 }

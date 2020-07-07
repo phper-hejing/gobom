@@ -2,7 +2,6 @@ package gobom
 
 import (
 	"encoding/json"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,10 +17,10 @@ type Requester interface {
 }
 
 type GobomRequest struct {
-	Options    *Options
-	Report     *Report
-	Duration   *uint64
-	ConCurrent *uint64
+	Options    *Options `json:"options"`
+	Report     *Report  `json:"report"`
+	Duration   *uint64  `json:"duration"`
+	ConCurrent *uint64  `json:"conCurrent"`
 
 	wg         sync.WaitGroup
 	stop       chan bool
@@ -46,12 +45,7 @@ const (
 	CLOSE_ALL               = 0
 )
 
-var (
-	ERR_FORM       = errors.New("无法识别的请求类型")
-	ERR_CONCURRENT = errors.New("并发数不能为0")
-)
-
-type DisposeCallFunc func(err error)
+type DisposeCallFunc func(err error) error
 
 func NewGomBomRequest(options *Options) (*GobomRequest, error) {
 	if err := options.Check(); err != nil {
