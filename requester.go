@@ -1,7 +1,6 @@
 package gobom
 
 import (
-	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -222,12 +221,8 @@ func (gobom *GobomRequest) Timer() {
 	gobom.Close(CLOSE_ALL)
 }
 
-func (gobom *GobomRequest) Info() string {
-	b, err := json.Marshal(gobom.Report)
-	if err != nil {
-		return ""
-	}
-	return string(b)
+func (gobom *GobomRequest) Info() *Report {
+	return gobom.Report
 }
 
 func (gobom *GobomRequest) getConCurrent() uint64 {

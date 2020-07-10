@@ -18,3 +18,10 @@ func Err(err error) error {
 func ErrPrint(err error) {
 	log.Println(errors.Errorf("%+v", err))
 }
+
+func GetErrString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

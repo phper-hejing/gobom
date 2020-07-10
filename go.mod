@@ -7,10 +7,10 @@ require (
 	github.com/donnie4w/go-logger v0.0.0-20170827050443-4740c51383f4
 	github.com/gin-gonic/gin v1.6.3
 	github.com/golang/protobuf v1.4.1
+	github.com/gorilla/websocket v1.4.2
 	github.com/jinzhu/gorm v1.9.12
 	github.com/pkg/errors v0.9.1
 	github.com/smallnest/goframe v1.0.0
 	github.com/tidwall/gjson v1.6.0
 	github.com/valyala/fasthttp v1.12.0
-	google.golang.org/protobuf v1.22.0
 )

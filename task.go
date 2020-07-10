@@ -54,6 +54,7 @@ func (task *Task) Run() error {
 		if task.GetStatus() != STATUS_STOP {
 			task.SetStatus(STATUS_OVER)
 		}
+		runTasks.Delete(task.TaskId)
 		return err
 	})
 }
@@ -69,9 +70,9 @@ func (task *Task) Stop(count uint64) {
 	task.Worker.Close(count)
 }
 
-func (task *Task) Info() string {
+func (task *Task) Info() *Report {
 	if task == nil || task.Worker == nil {
-		return ""
+		return nil
 	}
 	return task.Worker.Info()
 }

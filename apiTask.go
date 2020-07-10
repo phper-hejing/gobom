@@ -2,23 +2,33 @@ package gobom
 
 import (
 	"encoding/json"
-	"github.com/donnie4w/go-logger/logger"
-	"github.com/gin-gonic/gin"
-	"github.com/jinzhu/gorm"
+	"errors"
 	"io"
 	"net/http"
+
+	"github.com/donnie4w/go-logger/logger"
+	"github.com/gin-gonic/gin"
 )
 
 type TaskData struct {
-	gorm.Model
+	Model
+	Name     string `json:"name"`
 	Task     *Task  `json:"task" gorm:"EMBEDDED"`
-	TaskByte []byte `json:"taskByte"`
+	TaskJson string `json:"-"`
 }
 
-var taskTable = &TaskData{}
+type TaskReqData struct {
+	TaskId     string `json:"taskId"`
+	Name       string `json:"name"`
+	ConCurrent uint64 `json:"conCurrent"`
+	Duration   uint64 `json:"duration"`
+	ScriptId   uint   `json:"scriptId"`
+}
 
 func TaskDataHandel(ctx *gin.Context) {
+	var reqParam TaskReqData
 	opt := &Options{}
+	script := &ScriptData{}
 	taskData := TaskData{
 		Task: &Task{},
 	}
@@ -34,18 +44,30 @@ func TaskDataHandel(ctx *gin.Context) {
 			Data: data,
 		})
 	}()
-	if err = ctx.ShouldBind(opt); err != nil {
+	if err = ctx.ShouldBind(&reqParam); err != nil {
 		if err != io.EOF {
 			return
 		}
 	}
 
-	if opt.TaskId == "" {
-		if taskData.Task, err = NewTask(opt); err != nil {
-			return
+	if reqParam.TaskId == "" {
+		if reqParam.ScriptId != 0 {
+			script.ID = reqParam.ScriptId
+			if script, err = script.First(); err != nil {
+				return
+			}
+			if err = json.Unmarshal([]byte(script.Data), opt); err != nil {
+				return
+			}
+			taskData.Name = reqParam.Name
+			opt.ConCurrent = reqParam.ConCurrent
+			opt.Duration = reqParam.Duration
+			if taskData.Task, err = NewTask(opt); err != nil {
+				return
+			}
 		}
 	} else {
-		taskData.Task.TaskId = opt.TaskId
+		taskData.Task.TaskId = reqParam.TaskId
 	}
 
 	switch ctx.FullPath() {
@@ -60,7 +82,13 @@ func TaskDataHandel(ctx *gin.Context) {
 		}
 	case "/task/add":
 		err = taskData.Add()
-	case "/task/del":
+	case "/task/edit":
+		err = taskData.Edit()
+	case "/task/delete":
+		if _, ok := runTasks.Load(taskData.Task.TaskId); ok {
+			err = errors.New("请先停止任务")
+			return
+		}
 		err = taskData.Del()
 	case "/task/run":
 		err = taskData.Run()
@@ -72,21 +100,32 @@ func TaskDataHandel(ctx *gin.Context) {
 }
 
 func (taskData *TaskData) BeforeCreate() (err error) {
-	taskData.TaskByte, err = json.Marshal(taskData.Task)
+	bt, err := json.Marshal(taskData.Task)
+	taskData.TaskJson = string(bt)
 	return err
 }
 
 func (taskData *TaskData) BeforeSave() (err error) {
-	taskData.TaskByte, err = json.Marshal(taskData.Task)
+	bt, err := json.Marshal(taskData.Task)
+	taskData.TaskJson = string(bt)
 	return err
 }
 
 func (taskData *TaskData) AfterFind() (err error) {
-	return json.Unmarshal(taskData.TaskByte, taskData.Task)
+	defer func() {
+		if _, ok := runTasks.Load(taskData.Task.TaskId); ok && err == nil {
+			taskData.Task.Status = STATUS_RUN
+		}
+	}()
+	return json.Unmarshal([]byte(taskData.TaskJson), taskData.Task)
 }
 
 func (taskData *TaskData) Add() (err error) {
 	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Create(taskData).Error
+}
+
+func (taskData *TaskData) Edit() (err error) {
+	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Save(taskData).Error
 }
 
 func (taskData *TaskData) Del() (err error) {
@@ -128,7 +167,7 @@ func (taskData *TaskData) Stop() (err error) {
 	return
 }
 
-func (taskData *TaskData) Info() (data string, err error) {
+func (taskData *TaskData) Info() (data interface{}, err error) {
 	taskTemp, ok := runTasks.Load(taskData.Task.TaskId)
 	if ok {
 		task := taskTemp.(*Task)
@@ -138,5 +177,7 @@ func (taskData *TaskData) Info() (data string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return taskData.Task.Info(), nil
+	report := taskData.Task.Info()
+	report.TaskId = taskData.Task.TaskId
+	return report, nil
 }
