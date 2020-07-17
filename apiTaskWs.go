@@ -26,7 +26,8 @@ const (
 type TaskWs struct {
 	Conn       *websocket.Conn `json:"-"`
 	mu         sync.Mutex
-	TaskWsData *TaskWsData `json:"taskWsData"`
+	RecvWsData *TaskWsData `json:"taskWsData"`
+	RespWsData *TaskWsData `json:"respWsData"`
 }
 
 type TaskWsData struct {
@@ -50,7 +51,8 @@ func TaskWsHandel(ctx *gin.Context) {
 	}
 	defer ws.Close()
 	taskWs := &TaskWs{
-		TaskWsData: &TaskWsData{},
+		RecvWsData: &TaskWsData{},
+		RespWsData: &TaskWsData{},
 		mu:         sync.Mutex{},
 	}
 	taskWs.Conn = ws
@@ -61,7 +63,7 @@ func TaskWsHandel(ctx *gin.Context) {
 			logger.Debug(err)
 			return
 		}
-		if err := json.Unmarshal(msg, taskWs.TaskWsData); err != nil {
+		if err := json.Unmarshal(msg, taskWs.RecvWsData); err != nil {
 			logger.Debug(err)
 		}
 		taskWs.ParseMsg()
@@ -72,14 +74,14 @@ func (taskWs *TaskWs) ParseMsg() {
 	var err error
 	var data interface{}
 
-	msgData, _ := taskWs.TaskWsData.Data.(map[string]interface{})
+	msgData, _ := taskWs.RecvWsData.Data.(map[string]interface{})
 	taskId, _ := msgData["taskId"].(string)
 	taskData := &TaskData{
 		Task: &Task{
 			TaskId: taskId,
 		},
 	}
-	switch taskWs.TaskWsData.Type {
+	switch taskWs.RecvWsData.Type {
 	case WS_TASK_RUN:
 		err = taskData.Run()
 		data = map[string]string{"taskId": taskId}
@@ -92,8 +94,8 @@ func (taskWs *TaskWs) ParseMsg() {
 		return
 	}
 
-	taskWs.TaskWsData = &TaskWsData{
-		Type:  taskWs.TaskWsData.Type,
+	taskWs.RespWsData = &TaskWsData{
+		Type:  taskWs.RecvWsData.Type,
 		Data:  data,
 		Error: utils.GetErrString(err),
 	}
@@ -101,7 +103,7 @@ func (taskWs *TaskWs) ParseMsg() {
 }
 
 func (taskWs *TaskWs) SendMsg() error {
-	bt, err := json.Marshal(taskWs.TaskWsData)
+	bt, err := json.Marshal(taskWs.RespWsData)
 	if err != nil {
 		logger.Debug(err)
 		return err
@@ -120,8 +122,8 @@ func (taskWs *TaskWs) Ping() {
 		if taskWs.Conn == nil {
 			return
 		}
-		time.Sleep(time.Duration(1) * time.Second)
-		taskWs.TaskWsData = &TaskWsData{
+		time.Sleep(time.Duration(120) * time.Second)
+		taskWs.RespWsData = &TaskWsData{
 			Type: WS_PING,
 		}
 		if err := taskWs.SendMsg(); err != nil {

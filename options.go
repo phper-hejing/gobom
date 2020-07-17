@@ -228,7 +228,7 @@ func (transactionOptionsData *TransactionOptionsData) Empty() bool {
 }
 
 func (transactionOptions *TransactionOptions) Get() TransactionOptionsData {
-	if transactionOptions == nil || transactionOptions.TransactionOptionsDataList == nil {
+	if transactionOptions == nil || transactionOptions.TransactionOptionsDataList == nil || len(transactionOptions.TransactionOptionsDataList) == 0 {
 		return TransactionOptionsData{}
 	}
 	defer func() {

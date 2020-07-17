@@ -51,9 +51,7 @@ func NewGomBomRequest(options *Options) (*GobomRequest, error) {
 		return nil, err
 	}
 	gobom := GobomRequest{
-		Report: &Report{
-			ConCurrency: options.ConCurrent,
-		},
+		Report:     &Report{},
 		Options:    options,
 		ConCurrent: new(uint64),
 		Duration:   new(uint64),
@@ -77,7 +75,6 @@ func (gobom *GobomRequest) Dispose(callback DisposeCallFunc) error {
 		conCurrent = gobom.getConCurrent()
 		duration   = gobom.getDuration()
 		err        error
-		errNum     uint64
 	)
 
 	gobom.wg = sync.WaitGroup{}
@@ -88,10 +85,7 @@ func (gobom *GobomRequest) Dispose(callback DisposeCallFunc) error {
 	ReportWg.Add(1)
 	go gobom.Report.ReceivingResults(gobom.resultResp, &ReportWg) // 统计请求数据
 
-	err, errNum = gobom.Start(gobom.getConCurrent())
-	if errNum != gobom.getConCurrent() { // TODO 错误数如果不和并发数相等，应该是部分协程请求失败，不应该直接返回失败
-		err = nil
-	}
+	gobom.Start(gobom.getConCurrent())
 
 	gobom.wg.Wait()
 	close(gobom.stop)
@@ -113,13 +107,7 @@ func (gobom *GobomRequest) AddConcurrentAndStart(count uint64) {
 	gobom.Start(count)
 }
 
-func (gobom *GobomRequest) Start(count uint64) (err error, errNum uint64) {
-	var (
-		errCount = new(uint64)
-	)
-	if count == 0 {
-		return ERR_CONCURRENT, count
-	}
+func (gobom *GobomRequest) Start(count uint64) {
 	logger.Debug("signal count：", gobom.getConCurrent())
 	for i := uint64(0); i < count; i++ {
 		gobom.wg.Add(1)
@@ -128,13 +116,16 @@ func (gobom *GobomRequest) Start(count uint64) (err error, errNum uint64) {
 				gobom.wg.Done()
 				gobom.minusConCurrent(1)
 			}()
-			if err = gobom.board(); err != nil {
+			if err := gobom.board(); err != nil {
 				logger.Debug(err)
-				atomic.AddUint64(errCount, 1)
+				gobom.PushResponse(&Response{
+					IsSuccess: false,
+					ErrCode:   -1,
+					ErrMsg:    err.Error(),
+				})
 			}
 		}()
 	}
-	return err, atomic.LoadUint64(errCount)
 }
 
 func (gobom *GobomRequest) boardTest() (err error) {
@@ -174,9 +165,9 @@ func (gobom *GobomRequest) board() (err error) {
 			} else {
 				err_retries = 1
 			}
-			if resp != nil {
-				gobom.resultResp <- resp
-			}
+
+			gobom.PushResponse(resp)
+
 			if gobom.Options.Interval != 0 {
 				time.Sleep(time.Duration(gobom.Options.Interval) * time.Millisecond)
 			}
@@ -233,11 +224,22 @@ func (gobom *GobomRequest) getDuration() uint64 {
 	return atomic.LoadUint64(gobom.Duration)
 }
 
+func (gobom *GobomRequest) setConCurrent(n uint64) {
+	atomic.StoreUint64(gobom.ConCurrent, n)
+}
+
+func (gobom *GobomRequest) setDuration(n uint64) {
+	atomic.StoreUint64(gobom.Duration, n)
+}
+
 func (gobom *GobomRequest) addConCurrent(count uint64) {
 	atomic.AddUint64(gobom.ConCurrent, count)
 }
 
 func (gobom *GobomRequest) minusConCurrent(count uint64) {
+	if atomic.LoadUint64(gobom.ConCurrent) == 0 {
+		return
+	}
 	atomic.AddUint64(gobom.ConCurrent, ^uint64(count-1))
 }
 
@@ -246,7 +248,16 @@ func (gobom *GobomRequest) addDuration(count uint64) {
 }
 
 func (gobom *GobomRequest) minusDuration(count uint64) {
+	if atomic.LoadUint64(gobom.Duration) == 0 {
+		return
+	}
 	atomic.AddUint64(gobom.Duration, ^uint64(count-1))
+}
+
+func (gobom *GobomRequest) PushResponse(resp *Response) {
+	if resp != nil {
+		gobom.resultResp <- resp
+	}
 }
 
 func (gobom *GobomRequest) GetRequester() (requester Requester, err error) {

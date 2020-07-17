@@ -14,6 +14,7 @@ type TaskData struct {
 	Model
 	Name     string `json:"name"`
 	Task     *Task  `json:"task" gorm:"EMBEDDED"`
+	ScriptId uint   `json:"scriptId"`
 	TaskJson string `json:"-"`
 }
 
@@ -50,8 +51,10 @@ func TaskDataHandel(ctx *gin.Context) {
 		}
 	}
 
-	if reqParam.TaskId == "" {
-		if reqParam.ScriptId != 0 {
+	taskData.Task.TaskId = reqParam.TaskId
+	if reqParam.ScriptId != 0 {
+		taskData.First()
+		if reqParam.ScriptId != taskData.ScriptId {
 			script.ID = reqParam.ScriptId
 			if script, err = script.First(); err != nil {
 				return
@@ -60,14 +63,13 @@ func TaskDataHandel(ctx *gin.Context) {
 				return
 			}
 			taskData.Name = reqParam.Name
+			taskData.ScriptId = reqParam.ScriptId
 			opt.ConCurrent = reqParam.ConCurrent
 			opt.Duration = reqParam.Duration
-			if taskData.Task, err = NewTask(opt); err != nil {
+			if taskData.Task, err = NewTask(taskData.Task.TaskId, opt); err != nil {
 				return
 			}
 		}
-	} else {
-		taskData.Task.TaskId = reqParam.TaskId
 	}
 
 	switch ctx.FullPath() {
@@ -83,9 +85,9 @@ func TaskDataHandel(ctx *gin.Context) {
 	case "/task/add":
 		err = taskData.Add()
 	case "/task/edit":
-		err = taskData.Edit()
+		err = taskData.Edit(reqParam)
 	case "/task/delete":
-		if _, ok := runTasks.Load(taskData.Task.TaskId); ok {
+		if task := GetRunTask(taskData.Task.TaskId); task != nil {
 			err = errors.New("请先停止任务")
 			return
 		}
@@ -113,7 +115,7 @@ func (taskData *TaskData) BeforeSave() (err error) {
 
 func (taskData *TaskData) AfterFind() (err error) {
 	defer func() {
-		if _, ok := runTasks.Load(taskData.Task.TaskId); ok && err == nil {
+		if task := GetRunTask(taskData.Task.TaskId); task != nil && err == nil {
 			taskData.Task.Status = STATUS_RUN
 		}
 	}()
@@ -124,8 +126,17 @@ func (taskData *TaskData) Add() (err error) {
 	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Create(taskData).Error
 }
 
-func (taskData *TaskData) Edit() (err error) {
-	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Save(taskData).Error
+func (taskData *TaskData) Edit(reqParam TaskReqData) (err error) {
+	var t TaskData
+	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("task_id = ?", taskData.Task.TaskId).First(&t).Error; err != nil {
+		return err
+	}
+	t.Name = reqParam.Name
+	t.ScriptId = reqParam.ScriptId
+	t.Task = taskData.Task
+	t.Task.Worker.setConCurrent(reqParam.ConCurrent)
+	t.Task.Worker.setDuration(reqParam.Duration)
+	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("task_id = ?", taskData.Task.TaskId).Save(&t).Error
 }
 
 func (taskData *TaskData) Del() (err error) {
@@ -158,26 +169,20 @@ func (taskData *TaskData) Run() (err error) {
 }
 
 func (taskData *TaskData) Stop() (err error) {
-	taskTemp, ok := runTasks.Load(taskData.Task.TaskId)
-	if !ok {
-		return ERR_TASK_STOP_NONE
-	}
-	task := taskTemp.(*Task)
+	task := GetRunTask(taskData.Task.TaskId)
 	task.Stop(CLOSE_ALL)
 	return
 }
 
 func (taskData *TaskData) Info() (data interface{}, err error) {
-	taskTemp, ok := runTasks.Load(taskData.Task.TaskId)
-	if ok {
-		task := taskTemp.(*Task)
-		return task.Info(), nil
+	task := GetRunTask(taskData.Task.TaskId)
+	if task != nil {
+		taskData.Task = task
+	} else {
+		taskData, err = taskData.First()
+		if err != nil {
+			return nil, err
+		}
 	}
-	taskData, err = taskData.First()
-	if err != nil {
-		return "", err
-	}
-	report := taskData.Task.Info()
-	report.TaskId = taskData.Task.TaskId
-	return report, nil
+	return taskData, nil
 }

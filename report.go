@@ -5,8 +5,6 @@ import (
 )
 
 type Report struct {
-	TaskId                    string              `json:"taskId"`
-	ConCurrency               uint64              `json:"conCurrency"` // 请求并发数
 	TotalTime                 uint64              `json:"totalTime"`   // 任务处理总时间(成功请求)
 	MaxTime                   uint64              `json:"maxTime"`     // 单个请求最大消耗时长(成功请求)
 	MinTime                   uint64              `json:"minTime"`     // 单个请求最小消耗时长(成功请求)
