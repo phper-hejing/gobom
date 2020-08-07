@@ -24,6 +24,7 @@ const (
 	TYPE_FILE      = "file"
 	TYPE_SEND_DATA = "sendData"
 	TYPE_RESP      = "response"
+	TYPE_RAND      = "rand"
 
 	FILE_DATA_PATH = "../store/data"
 	FILE_PARSE_SEP = "---"
@@ -167,7 +168,17 @@ func (sendData *SendData) GetSendDataToMap(transactionOptions *TransactionOption
 	bm := make(map[string]interface{})
 	for _, v := range sendData.DataFieldList {
 		if v.Default != nil && v.Default != "" {
-			bm[v.Name] = v.Default
+			if v.Type == TYPE_RAND {
+				if val, ok := v.Default.(string); ok && val != "" {
+					arr := strings.Split(val, ",")
+					if len(arr) > 0 {
+						key := utils.RandInt32(0, int32(len(arr)))
+						bm[v.Name] = arr[key]
+					}
+				}
+			} else {
+				bm[v.Name] = v.Default
+			}
 			continue
 		}
 		switch v.Type {

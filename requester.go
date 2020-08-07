@@ -39,8 +39,9 @@ type Response struct {
 const (
 	DEFAULT_STOP_CAP        = 1 << 20
 	DEFAULT_RESPONSE_COUNT  = 1000
-	DEFAULT_REQUEST_TIMEOUT = 5 // 连接超时（秒）
-	ERR_RETRIES             = 3 // 失败重试次数
+	DEFAULT_REQUEST_TIMEOUT = 5     // 连接超时（秒）
+	DEFAULT_MAX_CONN        = 65535 // 主机建立的最大连接数
+	ERR_RETRIES             = 3     // 失败重试次数
 	CLOSE_ALL               = 0
 )
 
@@ -50,14 +51,19 @@ func NewGomBomRequest(options *Options) (*GobomRequest, error) {
 	if err := options.Check(); err != nil {
 		return nil, err
 	}
+
 	gobom := GobomRequest{
-		Report:     &Report{},
+		Report: &Report{
+			mu: sync.Mutex{},
+		},
 		Options:    options,
 		ConCurrent: new(uint64),
 		Duration:   new(uint64),
 	}
+
 	atomic.StoreUint64(gobom.ConCurrent, options.ConCurrent)
 	atomic.StoreUint64(gobom.Duration, options.Duration)
+
 	return &gobom, nil
 }
 

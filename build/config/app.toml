@@ -1,0 +1,2 @@
+mysqlSource = "root:root@tcp(127.0.0.1:3306)/gobom?charset=utf8&parseTime=True&loc=Local"
+serverPort = ":9600"

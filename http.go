@@ -11,6 +11,8 @@ import (
 	"gobom/utils"
 )
 
+var gobomClient fasthttp.Client
+
 type Http struct {
 	startTime          time.Duration
 	endTime            time.Duration
@@ -83,7 +85,9 @@ func (http *Http) send() (err error) {
 	}()
 
 	http.startTime = utils.Now()
-	http.err = fasthttp.DoTimeout(req, resp, time.Duration(DEFAULT_REQUEST_TIMEOUT)*time.Second)
+	gobomClient.ReadTimeout = time.Duration(DEFAULT_REQUEST_TIMEOUT) * time.Second
+	gobomClient.MaxConnsPerHost = DEFAULT_MAX_CONN
+	http.err = gobomClient.DoTimeout(req, resp, time.Duration(DEFAULT_REQUEST_TIMEOUT)*time.Second)
 	http.response = resp
 
 	return nil

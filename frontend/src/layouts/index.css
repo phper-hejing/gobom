@@ -1,0 +1,15 @@
+.logo{
+    /* background: rgba(255, 255, 255, 0.2); */
+    /* margin: 5px 0px 5px 24px; */
+}
+.normal {
+    font-family: Georgia, sans-serif;
+}
+
+.title {
+    font-weight: normal;
+    letter-spacing: -1px;
+    /* background: linear-gradient(to right,#4099ff,#73b4ff); */
+    color: white;
+    margin: 0;
+}

@@ -3,19 +3,18 @@ package gobom
 import (
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-
 	"github.com/donnie4w/go-logger/logger"
 	"github.com/gin-gonic/gin"
+	"io"
+	"net/http"
 )
 
 type TaskData struct {
 	Model
-	Name     string `json:"name"`
+	Name     string `json:"name" gorm:"unique_index"`
 	Task     *Task  `json:"task" gorm:"EMBEDDED"`
 	ScriptId uint   `json:"scriptId"`
-	TaskJson string `json:"-"`
+	TaskJson string `json:"-" gorm:"type:longtext"`
 }
 
 type TaskReqData struct {
@@ -26,10 +25,10 @@ type TaskReqData struct {
 	ScriptId   uint   `json:"scriptId"`
 }
 
+var taskTable = &TaskData{}
+
 func TaskDataHandel(ctx *gin.Context) {
 	var reqParam TaskReqData
-	opt := &Options{}
-	script := &ScriptData{}
 	taskData := TaskData{
 		Task: &Task{},
 	}
@@ -51,26 +50,8 @@ func TaskDataHandel(ctx *gin.Context) {
 		}
 	}
 
+	taskData.Name = reqParam.Name
 	taskData.Task.TaskId = reqParam.TaskId
-	if reqParam.ScriptId != 0 {
-		taskData.First()
-		if reqParam.ScriptId != taskData.ScriptId {
-			script.ID = reqParam.ScriptId
-			if script, err = script.First(); err != nil {
-				return
-			}
-			if err = json.Unmarshal([]byte(script.Data), opt); err != nil {
-				return
-			}
-			taskData.Name = reqParam.Name
-			taskData.ScriptId = reqParam.ScriptId
-			opt.ConCurrent = reqParam.ConCurrent
-			opt.Duration = reqParam.Duration
-			if taskData.Task, err = NewTask(taskData.Task.TaskId, opt); err != nil {
-				return
-			}
-		}
-	}
 
 	switch ctx.FullPath() {
 	case "/task":
@@ -83,6 +64,13 @@ func TaskDataHandel(ctx *gin.Context) {
 			data = nil
 		}
 	case "/task/add":
+		var task *Task
+		task, err = taskData.InitTask(reqParam)
+		if err != nil {
+			return
+		}
+		taskData.Task = task
+		taskData.ScriptId = reqParam.ScriptId
 		err = taskData.Add()
 	case "/task/edit":
 		err = taskData.Edit(reqParam)
@@ -93,9 +81,13 @@ func TaskDataHandel(ctx *gin.Context) {
 		}
 		err = taskData.Del()
 	case "/task/run":
+		if task := GetRunTask(taskData.Task.TaskId); task != nil {
+			err = errors.New("任务正在运行")
+			return
+		}
 		err = taskData.Run()
 	case "/task/info":
-		data, err = taskData.Info()
+		//data, err = taskData.Info()
 	case "/task/stop":
 		err = taskData.Stop()
 	}
@@ -132,10 +124,16 @@ func (taskData *TaskData) Edit(reqParam TaskReqData) (err error) {
 		return err
 	}
 	t.Name = reqParam.Name
-	t.ScriptId = reqParam.ScriptId
-	t.Task = taskData.Task
 	t.Task.Worker.setConCurrent(reqParam.ConCurrent)
 	t.Task.Worker.setDuration(reqParam.Duration)
+	if t.ScriptId != reqParam.ScriptId { // 修改了脚本ID需要重新初始化任务实例
+		task, err := t.InitTask(reqParam)
+		if err != nil {
+			return err
+		}
+		t.Task = task
+		t.ScriptId = reqParam.ScriptId
+	}
 	return GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("task_id = ?", taskData.Task.TaskId).Save(&t).Error
 }
 
@@ -165,24 +163,84 @@ func (taskData *TaskData) Run() (err error) {
 		}
 		taskData.Update()
 	}()
+
 	return
 }
 
 func (taskData *TaskData) Stop() (err error) {
 	task := GetRunTask(taskData.Task.TaskId)
+	if task == nil {
+		return errors.New("任务没有运行")
+	}
 	task.Stop(CLOSE_ALL)
 	return
 }
 
 func (taskData *TaskData) Info() (data interface{}, err error) {
-	task := GetRunTask(taskData.Task.TaskId)
-	if task != nil {
-		taskData.Task = task
-	} else {
+	var task *Task
+	task = GetRunTask(taskData.Task.TaskId)
+
+	if task == nil {
 		taskData, err = taskData.First()
-		if err != nil {
-			return nil, err
+		if err != nil || taskData.Task == nil {
+			logger.Debug("taskData.Task is nil", err)
+			return
+		}
+		task = taskData.Task
+	}
+
+	if task.Worker == nil || task.Worker.Report == nil {
+		logger.Debug("report is nil")
+		return
+	}
+
+	return &TaskData{
+		Name: taskData.Name,
+		Task: &Task{
+			TaskId: task.TaskId,
+			Worker: &GobomRequest{
+				Report:     task.Worker.Report.Copy(),
+				Duration:   task.Worker.Duration,
+				ConCurrent: task.Worker.ConCurrent,
+			},
+			Status: task.Status,
+		},
+	}, nil
+}
+
+func (taskData *TaskData) InitTask(reqParam TaskReqData) (task *Task, err error) {
+	var script = &ScriptData{}
+	var opt = &Options{}
+	script.ID = reqParam.ScriptId
+	if script, err = script.First(); err != nil {
+		return
+	}
+
+	if err = json.Unmarshal([]byte(script.Data), opt); err != nil {
+		return
+	}
+
+	opt.ConCurrent = reqParam.ConCurrent
+	opt.Duration = reqParam.Duration
+	return NewTask(taskData.Task.TaskId, opt)
+}
+
+func ResetTaskScript(scriptId uint) {
+	var taskDataList []TaskData
+	if err := GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Where("script_id = ?", scriptId).Find(&taskDataList).Error; err == nil {
+		for _, data := range taskDataList {
+			task, err := data.InitTask(TaskReqData{
+				ConCurrent: data.Task.Worker.getConCurrent(),
+				Duration:   data.Task.Worker.getDuration(),
+				ScriptId:   scriptId,
+			})
+			if err != nil {
+				logger.Debug(err)
+				return
+			}
+			data.Task = task
+			data.ScriptId = scriptId
+			GobomStore.GetDb().Table(GobomStore.GetTableName(taskTable)).Save(&data)
 		}
 	}
-	return taskData, nil
 }

@@ -2,18 +2,18 @@ package gobom
 
 import (
 	"encoding/json"
-	"github.com/gin-gonic/gin"
-	"github.com/jinzhu/gorm"
 	"io"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 type ScriptData struct {
-	gorm.Model
+	Model
 	Type     string `json:"type"`
-	Name     string `json:"name"`
+	Name     string `json:"name" gorm:"unique_index"`
 	Protocol int    `json:"protocol"`
-	Data     string `json:"data" gorm:"type:'longtext'"`
+	Data     string `json:"data" gorm:"type:longtext"`
 }
 
 var scriptTable = &ScriptData{}
@@ -50,6 +50,10 @@ func ScriptDataHandel(ctx *gin.Context) {
 		err = scriptData.Del()
 	case "/script/edit":
 		err = scriptData.Update()
+		// 关联此脚本的任务需要重新初始化实例
+		if err == nil {
+			ResetTaskScript(scriptData.ID)
+		}
 	case "/script/test":
 		err = scriptData.Run()
 	}

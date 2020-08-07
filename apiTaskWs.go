@@ -24,10 +24,8 @@ const (
 )
 
 type TaskWs struct {
-	Conn       *websocket.Conn `json:"-"`
-	mu         sync.Mutex
-	RecvWsData *TaskWsData `json:"taskWsData"`
-	RespWsData *TaskWsData `json:"respWsData"`
+	Conn *websocket.Conn `json:"-"`
+	mu   sync.Mutex
 }
 
 type TaskWsData struct {
@@ -36,7 +34,6 @@ type TaskWsData struct {
 	Error string      `json:"error"`
 }
 
-var taskTable = &TaskData{}
 var upGrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
@@ -49,39 +46,44 @@ func TaskWsHandel(ctx *gin.Context) {
 		logger.Debug(err)
 		return
 	}
+
 	defer ws.Close()
+
 	taskWs := &TaskWs{
-		RecvWsData: &TaskWsData{},
-		RespWsData: &TaskWsData{},
-		mu:         sync.Mutex{},
+		mu: sync.Mutex{},
 	}
 	taskWs.Conn = ws
+
 	go taskWs.Ping()
+
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			logger.Debug(err)
 			return
 		}
-		if err := json.Unmarshal(msg, taskWs.RecvWsData); err != nil {
+
+		RecvWsData := &TaskWsData{}
+		if err := json.Unmarshal(msg, RecvWsData); err != nil {
 			logger.Debug(err)
 		}
-		taskWs.ParseMsg()
+		taskWs.ParseMsg(RecvWsData)
 	}
 }
 
-func (taskWs *TaskWs) ParseMsg() {
+func (taskWs *TaskWs) ParseMsg(reqData *TaskWsData) {
 	var err error
 	var data interface{}
 
-	msgData, _ := taskWs.RecvWsData.Data.(map[string]interface{})
+	msgData, _ := reqData.Data.(map[string]interface{})
 	taskId, _ := msgData["taskId"].(string)
 	taskData := &TaskData{
 		Task: &Task{
 			TaskId: taskId,
 		},
 	}
-	switch taskWs.RecvWsData.Type {
+
+	switch reqData.Type {
 	case WS_TASK_RUN:
 		err = taskData.Run()
 		data = map[string]string{"taskId": taskId}
@@ -94,26 +96,28 @@ func (taskWs *TaskWs) ParseMsg() {
 		return
 	}
 
-	taskWs.RespWsData = &TaskWsData{
-		Type:  taskWs.RecvWsData.Type,
+	taskWs.SendMsg(&TaskWsData{
+		Type:  reqData.Type,
 		Data:  data,
 		Error: utils.GetErrString(err),
-	}
-	taskWs.SendMsg()
+	})
 }
 
-func (taskWs *TaskWs) SendMsg() error {
-	bt, err := json.Marshal(taskWs.RespWsData)
+func (taskWs *TaskWs) SendMsg(respData *TaskWsData) error {
+	taskWs.mu.Lock()
+	defer taskWs.mu.Unlock()
+
+	bt, err := json.Marshal(respData)
 	if err != nil {
 		logger.Debug(err)
 		return err
 	}
-	taskWs.mu.Lock()
-	defer taskWs.mu.Unlock()
+
 	if err := taskWs.Conn.WriteMessage(websocket.TextMessage, bt); err != nil {
 		logger.Debug(err)
 		return err
 	}
+
 	return nil
 }
 
@@ -122,11 +126,10 @@ func (taskWs *TaskWs) Ping() {
 		if taskWs.Conn == nil {
 			return
 		}
+
 		time.Sleep(time.Duration(120) * time.Second)
-		taskWs.RespWsData = &TaskWsData{
-			Type: WS_PING,
-		}
-		if err := taskWs.SendMsg(); err != nil {
+
+		if err := taskWs.SendMsg(&TaskWsData{Type: WS_PING}); err != nil {
 			return
 		}
 	}

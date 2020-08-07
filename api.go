@@ -40,14 +40,16 @@ func NewApi() *Api {
 }
 
 func (api *Api) RegisterRouter() {
-	api.Http.Any("task", TaskDataHandel)
-	api.Http.Any("task/ws", TaskWsHandel)
-	api.Http.Any("task/add", TaskDataHandel)
-	api.Http.Any("task/edit", TaskDataHandel)
-	api.Http.Any("task/delete", TaskDataHandel)
-	api.Http.Any("task/run", TaskDataHandel)
-	api.Http.Any("task/info", TaskDataHandel)
-	api.Http.Any("task/stop", TaskDataHandel)
+	api.Http.Static("/frontend/", "./")
+	api.Http.Any("/ws", TaskWsHandel)
+
+	api.Http.Any("/task", TaskDataHandel)
+	api.Http.Any("/task/add", TaskDataHandel)
+	api.Http.Any("/task/edit", TaskDataHandel)
+	api.Http.Any("/task/delete", TaskDataHandel)
+	api.Http.Any("/task/run", TaskDataHandel)
+	api.Http.Any("/task/info", TaskDataHandel)
+	api.Http.Any("/task/stop", TaskDataHandel)
 
 	api.Http.Any("/script", ScriptDataHandel)
 	api.Http.Any("/script/add", ScriptDataHandel)

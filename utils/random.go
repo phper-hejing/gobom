@@ -21,3 +21,11 @@ func GetRandomStrings(len uint64) string {
 	}
 	return rs
 }
+
+// 32bit 随机
+func RandInt32(min, max int32) int32 {
+	if min >= max {
+		return max
+	}
+	return rand.Int31n(max-min) + min
+}
