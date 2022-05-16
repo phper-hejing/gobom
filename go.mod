@@ -13,6 +13,6 @@ require (
 	github.com/jinzhu/gorm v1.9.12
 	github.com/pkg/errors v0.9.1
 	github.com/smallnest/goframe v1.0.0
-	github.com/tidwall/gjson v1.6.0
+	github.com/tidwall/gjson v1.9.3
 	github.com/valyala/fasthttp v1.12.0
 )
